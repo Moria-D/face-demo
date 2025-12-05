@@ -24,3 +24,29 @@
 ### 4. 极简架构 (Lightweight Architecture)
 - **零依赖：** 移除了 `face-api.js` 等庞大的检测库。
 - **纯 Canvas：** 直接解析 Grid 图片，内存占用极低，在移动端也能流畅运行 60FPS。
+
+## 🚀 快速开始 (Quick Start)
+
+### 1. 安装依赖
+```bash
+pip install flask replicate
+```
+
+### 2. 设置 API Token
+本项目需要 Replicate API 才能生成网格图。请在终端执行：
+
+**Windows (CMD):**
+```cmd
+set REPLICATE_API_TOKEN=your_replicate_api_token_here
+```
+
+**Linux/Mac:**
+```bash
+export REPLICATE_API_TOKEN=your_replicate_api_token_here
+```
+
+### 3. 启动服务
+```bash
+python app.py
+```
+访问 http://localhost:5000 即可体验。

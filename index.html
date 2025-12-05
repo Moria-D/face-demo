@@ -3,158 +3,214 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Looker: Visible Monitor</title>
+    <title>Face Looker AI: Generate & Interact</title>
     <style>
+        /* 全局样式 */
         body {
-            margin: 0; padding: 0;
-            background-color: #000;
-            color: #fff;
-            font-family: monospace;
-            height: 100vh;
+            margin: 0; padding: 0; background-color: #050505; color: #fff;
+            font-family: system-ui, -apple-system, sans-serif;
+            height: 100vh; overflow: hidden;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            overflow: hidden;
-            cursor: none; 
         }
 
+        /* 生成器面板 (上传前显示) */
+        #generator-panel {
+            position: absolute; z-index: 200;
+            background: rgba(20, 20, 20, 0.95); border: 1px solid #333;
+            padding: 40px; border-radius: 20px; text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.8);
+            transition: opacity 0.5s, transform 0.5s;
+        }
+        
+        h1 { margin: 0 0 10px 0; font-size: 24px; background: linear-gradient(45deg, #fff, #888); -webkit-background-clip: text; color: transparent; }
+        p { color: #666; font-size: 14px; margin-bottom: 30px; }
+
+        .upload-btn {
+            background: #2563eb; color: white; border: none; padding: 12px 30px;
+            border-radius: 50px; font-size: 16px; font-weight: bold; cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: inline-flex; align-items: center; gap: 8px;
+        }
+        .upload-btn:hover { transform: scale(1.05); background: #3b82f6; box-shadow: 0 0 20px rgba(37, 99, 235, 0.4); }
+        .upload-btn:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        /* 舞台 (生成后显示) */
         #stage {
             width: 512px; height: 512px;
             max-width: 95vw; max-height: 95vh;
-            box-shadow: 0 0 50px #333;
-            border: 2px solid #333;
-            border-radius: 12px;
-            overflow: hidden;
+            border-radius: 12px; overflow: hidden;
             background: #000;
-            filter: blur(10px);
-            transition: filter 1s ease-out;
-            position: relative;
+            opacity: 0; transform: scale(0.9); /* 初始隐藏 */
+            transition: all 1s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 0 100px rgba(0,0,0,0.8);
         }
         
-        #stage.loaded { filter: blur(0); }
+        #stage.active { opacity: 1; transform: scale(1); }
         canvas { display: block; width: 100%; height: 100%; }
 
-        /* [强制显示] 监控面板 */
-        .monitor {
-            /* 使用 fixed 强制固定在浏览器窗口窗口，无视文档流 */
-            position: fixed; 
-            top: 20px; left: 20px;
-            
-            /* 层级设为极高 */
-            z-index: 999999; 
-            
-            /* 高对比度样式 */
-            background-color: #ffffff; 
-            color: #000000;
-            
-            /* 为了测试，暂时加一个红色粗边框 */
-            border: 4px solid #ff0000; 
-            
-            padding: 15px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: bold;
-            pointer-events: none;
-            box-shadow: 0 0 30px rgba(255, 255, 255, 0.8);
-        }
-        
-        .monitor-row { margin-bottom: 5px; display: flex; align-items: center; }
-        .monitor span { color: #d946ef; margin-left: 5px; } 
-
-        .led {
-            display: inline-block; width: 12px; height: 12px; 
-            border-radius: 50%; margin-right: 10px; border: 1px solid #999;
-        }
-        .led.active { background-color: #16a34a; box-shadow: 0 0 8px #16a34a; animation: pulse 1s infinite; }
-        .led.idle { background-color: #ea580c; box-shadow: 0 0 8px #ea580c; animation: pulse 2s infinite; }
-
-        @keyframes pulse {
-            0% { transform: scale(1); } 50% { transform: scale(1.2); } 100% { transform: scale(1); }
+        /* 状态标记 */
+        .status-badge {
+            position: absolute; top: 20px; left: 20px; z-index: 100;
+            background: #fff; color: #000; padding: 6px 12px; border-radius: 6px;
+            font-family: monospace; font-weight: bold; font-size: 12px;
+            pointer-events: none; opacity: 0; transition: opacity 0.5s;
         }
 
-        #loading {
-            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-            color: #fff; font-size: 20px; z-index: 1000;
-            background: #000; padding: 20px; border: 1px solid #fff;
+        /* 加载动画 */
+        .loader {
+            width: 20px; height: 20px; border: 3px solid #fff; border-bottom-color: transparent;
+            border-radius: 50%; display: none; animation: spin 1s linear infinite;
         }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
     </style>
 </head>
 <body>
 
-<div class="monitor">
-    <div class="monitor-row">
-        <div class="led active" id="status-dot"></div>
-        STATUS: <span id="status-text" style="color:#000;">INIT</span>
-    </div>
-    <div class="monitor-row">
-        VERSION: <span>FIXED_UI</span>
-    </div>
-    <div class="monitor-row">
-        SMOOTH: <span>0.08</span>
+<div id="generator-panel">
+    <h1>Face Looker AI</h1>
+    <p>上传一张人像照片，AI 将自动生成视线交互模型</p>
+    
+    <button class="upload-btn" onclick="document.getElementById('file-input').click()" id="btn-main">
+        <span class="loader" id="loader"></span>
+        <span id="btn-text">上传照片 & 开始生成</span>
+    </button>
+    <input type="file" id="file-input" accept="image/*" style="display:none" onchange="handleUpload(event)">
+    
+    <div style="margin-top: 15px; font-size: 12px; color: #888; line-height: 1.6;" id="status-msg">
+        需自备 Replicate API Token<br>
+        (生成 121 个角度约需 60-90秒)
     </div>
 </div>
 
-<div id="loading">LOADING...</div>
-
+<div class="status-badge" id="monitor">LIVE INTERACTION</div>
 <div id="stage">
     <canvas id="canvas"></canvas>
 </div>
 
 <script>
+    // === 核心逻辑配置 ===
     const CONFIG = {
-        imageSrc: './example_grid.webp', 
         rows: 11, cols: 11,
-        smoothing: 0.08, 
-        idleTime: 2000 
+        smoothing: 0.1,  // 稍微调高平滑系数，让跟随更跟手
+        idleTime: 3000,   // 闲置3秒后归位
+        idleSmoothing: 0.02 // 归位时更慢，显得更自然
     };
 
     let gridImg = null;
     let frameW = 0, frameH = 0;
+    
+    // 物理状态
     let targetX = 0.5, targetY = 0.5;
     let currentX = 0.5, currentY = 0.5;
     let lastIndex = -1;
     let idleTimer = null;
-    
+    let isIdle = false; // 标记是否处于待机状态
+
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
-    const loading = document.getElementById('loading');
-    const statusText = document.getElementById('status-text');
-    const statusDot = document.getElementById('status-dot');
+    const panel = document.getElementById('generator-panel');
+    const btnMain = document.getElementById('btn-main');
+    const btnText = document.getElementById('btn-text');
+    const loader = document.getElementById('loader');
+    const statusMsg = document.getElementById('status-msg');
+    const monitor = document.getElementById('monitor');
 
-    window.onload = function() {
-        console.log("Script Loaded"); // 调试信息
+    // 1. 处理上传并调用后端 API
+    async function handleUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // UI 状态更新
+        setLoading(true);
+        statusMsg.innerHTML = "正在调度 GPU 集群生成 121 个视线角度...<br>请耐心等待，不要关闭页面 (预计 60s)";
+        statusMsg.style.color = "#4ade80"; // Green light
+
+        const formData = new FormData();
+        formData.append('image', file);
+
+        try {
+            // 调用我们写的 Python 后端
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                if (data.error && data.error.includes("429")) {
+                    throw new Error("API 调用过于频繁，请休息 1 分钟后再试");
+                }
+                throw new Error(data.error || "服务器未知错误");
+            }
+            
+            if (!data.grid_url) throw new Error("未返回 Grid URL");
+
+            statusMsg.innerHTML = "生成完毕！正在下载高清纹理...";
+            
+            // 拿到 URL 后初始化交互引擎
+            initInteraction(data.grid_url);
+
+        } catch (err) {
+            console.error(err);
+            statusMsg.innerText = "错误: " + err.message;
+            statusMsg.style.color = "#ef4444";
+            setLoading(false);
+        }
+    }
+
+    function setLoading(isLoading) {
+        btnMain.disabled = isLoading;
+        loader.style.display = isLoading ? 'inline-block' : 'none';
+        btnText.innerText = isLoading ? '正在处理...' : '上传照片 & 开始生成';
+    }
+
+    // 2. 初始化交互引擎 (P0 Version)
+    function initInteraction(imageUrl) {
         gridImg = new Image();
-        gridImg.src = CONFIG.imageSrc;
+        gridImg.crossOrigin = "Anonymous"; // 允许跨域
+        gridImg.src = imageUrl;
 
         gridImg.onload = () => {
-            console.log("Image Loaded");
-            loading.style.display = 'none';
-            stage.classList.add('loaded');
-            
+            // 隐藏面板，显示舞台
+            panel.style.opacity = 0;
+            panel.style.pointerEvents = 'none';
+            stage.classList.add('active');
+            monitor.style.opacity = 1;
+
+            // 计算尺寸
             frameW = gridImg.width / CONFIG.cols;
             frameH = gridImg.height / CONFIG.rows;
             resizeStage(frameW, frameH);
-            
+
+            // 启动循环
             requestAnimationFrame(animateLoop);
             
+            // 绑定事件
             window.addEventListener('mousemove', handleInput);
             window.addEventListener('resize', () => resizeStage(frameW, frameH));
             
-            updateStatus('ACTIVE');
+            // 初始归位
             resetIdleTimer();
         };
+    }
 
-        gridImg.onerror = () => {
-            loading.innerText = "ERROR: image not found";
-            loading.style.backgroundColor = "red";
-        };
-    };
-
+    // 3. 物理引擎
     function handleInput(e) {
         let rx = e.clientX / window.innerWidth;
         let ry = e.clientY / window.innerHeight;
-        ry = 1.0 - ry; 
+        
+        // 修正逻辑：确保能取到 0.0 和 1.0 的边缘值
+        // 之前可能因为 float 精度问题取不到第 11 格
+        rx = Math.max(0, Math.min(1, rx));
+        ry = Math.max(0, Math.min(1, ry));
+
+        ry = 1.0 - ry; // Y轴反转
+        
         targetX = rx; targetY = ry;
-        updateStatus('ACTIVE');
+        isIdle = false;
         resetIdleTimer();
     }
 
@@ -162,29 +218,22 @@
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
             targetX = 0.5; targetY = 0.5;
-            updateStatus('IDLE');
+            isIdle = true; // 进入待机模式
         }, CONFIG.idleTime);
     }
 
-    function updateStatus(state) {
-        statusText.innerText = state;
-        if (state.includes('IDLE')) {
-            statusDot.className = 'led idle';
-            statusText.style.color = '#ea580c';
-        } else {
-            statusDot.className = 'led active';
-            statusText.style.color = '#16a34a';
-        }
-    }
-
     function animateLoop() {
-        currentX += (targetX - currentX) * CONFIG.smoothing;
-        currentY += (targetY - currentY) * CONFIG.smoothing;
+        // 如果处于待机归位模式，使用更慢的系数，看起来像生物的“缓慢回神”
+        const factor = isIdle ? CONFIG.idleSmoothing : CONFIG.smoothing;
 
-        let col = Math.floor(currentX * CONFIG.cols);
-        let row = Math.floor(currentY * CONFIG.rows);
-        col = Math.max(0, Math.min(col, CONFIG.cols - 1));
-        row = Math.max(0, Math.min(row, CONFIG.rows - 1));
+        currentX += (targetX - currentX) * factor;
+        currentY += (targetY - currentY) * factor;
+
+        // 映射到 Grid 索引 (0 ~ 10)
+        // 使用 floor 并不是最完美的，因为它导致最后一格很难选中
+        // 优化算法：将 0~1 的连续区间均匀映射到 0~10 的离散区间
+        let col = Math.min(Math.floor(currentX * CONFIG.cols), CONFIG.cols - 1);
+        let row = Math.min(Math.floor(currentY * CONFIG.rows), CONFIG.rows - 1);
 
         const index = row * CONFIG.cols + col;
         if (index !== lastIndex) {
@@ -204,17 +253,16 @@
     }
 
     function resizeStage(w, h) {
-        if (!w || !h) return;
         const ratio = w / h;
-        const maxW = window.innerWidth * 0.95;
-        const maxH = window.innerHeight * 0.95;
+        const maxW = window.innerWidth * 0.9;
+        const maxH = window.innerHeight * 0.9;
         let finalW = w, finalH = h;
         if (finalH > maxH) { finalH = maxH; finalW = finalH * ratio; }
         if (finalW > maxW) { finalW = maxW; finalH = finalW / ratio; }
         stage.style.width = finalW + 'px';
         stage.style.height = finalH + 'px';
         canvas.width = w; canvas.height = h;
-        lastIndex = -1; 
+        lastIndex = -1;
     }
 </script>
 </body>
