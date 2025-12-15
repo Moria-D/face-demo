@@ -148,8 +148,6 @@
 
 <script>
     // === 核心逻辑配置 ===
-    // 注意：默认配置为 7x7 (适配新版 step=5)
-    // 但我们会尝试自动检测 11x11 的旧图
     let CONFIG = {
         rows: 7, cols: 7, 
         smoothing: 0.1,
@@ -166,6 +164,9 @@
     let lastIndex = -1;
     let idleTimer = null;
     let isIdle = false; 
+
+    // 微动参数
+    let noiseTime = 0;
 
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('canvas');
@@ -199,12 +200,20 @@
                 return;
             }
 
-            listDiv.innerHTML = files.map(file => `
-                <div class="history-item" onclick="loadFromHistory('${file.url}')">
+            // 这里我们需要把 meta 对象转成字符串传给 onclick，需要小心引号转义
+            // 最好的办法是把数据存在 window 全局变量里，onclick 传索引
+            window.historyData = files;
+
+            listDiv.innerHTML = files.map((file, index) => {
+                const metaInfo = file.meta && file.meta.rows 
+                    ? `<span style="color:#666; margin-left:5px">(${file.meta.rows}x${file.meta.cols})</span>` 
+                    : '';
+                return `
+                <div class="history-item" onclick="loadFromHistoryIndex(${index})">
                     <img src="${file.url}" loading="lazy">
-                    <div class="history-meta">${file.time}</div>
+                    <div class="history-meta">${file.time}${metaInfo}</div>
                 </div>
-            `).join('');
+            `}).join('');
             
             isHistoryLoaded = true;
         } catch (e) {
@@ -212,10 +221,12 @@
         }
     }
 
-    function loadFromHistory(url) {
+    function loadFromHistoryIndex(index) {
+        const file = window.historyData[index];
         toggleHistory(); 
         statusMsg.innerText = "正在从历史记录加载...";
-        initInteraction(url);
+        // 传递 meta
+        initInteraction(file.url, file.meta);
     }
 
     async function handleUpload(e) {
@@ -248,7 +259,8 @@
 
             statusMsg.innerHTML = "生成完毕！正在下载高清纹理...";
             
-            initInteraction(data.grid_url);
+            // 传入后端返回的 meta (rows/cols)
+            initInteraction(data.grid_url, data.meta);
             isHistoryLoaded = false; 
 
         } catch (err) {
@@ -277,37 +289,36 @@
         initInteraction(finalUrl);
     }
 
-    // 2. 初始化交互引擎
-    function initInteraction(imageUrl) {
+    // 2. 初始化交互引擎 (支持 meta)
+    function initInteraction(imageUrl, meta) {
         gridImg = new Image();
         gridImg.crossOrigin = "Anonymous"; 
         gridImg.src = imageUrl;
 
         gridImg.onload = () => {
-            // === 智能检测网格尺寸 (修正版) ===
-            const w = gridImg.width;
-            console.log(`Grid Image Loaded. Width: ${w}px`);
+            console.log(`Grid Image Loaded. Width: ${gridImg.width}px`);
             
-            // 优先判断能否被 11 整除 (旧版模型通常输出 256x256 * 11 = 2816 或 512x512 * 11 = 5632)
-            if (w % 11 === 0) {
-                console.log("Width is divisible by 11. Setting layout to 11x11.");
-                CONFIG.rows = 11;
-                CONFIG.cols = 11;
+            // === 优先级策略 ===
+            // 1. 如果有后端 Meta，直接用 Meta
+            if (meta && meta.rows && meta.cols) {
+                console.log("Using backend metadata:", meta);
+                CONFIG.rows = meta.rows;
+                CONFIG.cols = meta.cols;
             } 
-            // 其次判断能否被 7 整除 (新版 step=5 输出)
-            else if (w % 7 === 0) {
-                console.log("Width is divisible by 7. Setting layout to 7x7.");
-                CONFIG.rows = 7;
-                CONFIG.cols = 7;
-            }
-            // 兜底逻辑：如果都除不尽，或者都除得尽，根据大小猜
+            // 2. 如果没有 Meta，回退到宽度猜测 (兼容旧图)
             else {
-                console.warn("Cannot detect layout automatically. Defaulting to 7x7.");
-                CONFIG.rows = 7;
-                CONFIG.cols = 7;
+                console.log("No metadata found, auto-detecting...");
+                const w = gridImg.width;
+                if (w % 11 === 0) {
+                    CONFIG.rows = 11; CONFIG.cols = 11;
+                } else if (w % 7 === 0) {
+                    CONFIG.rows = 7; CONFIG.cols = 7;
+                } else {
+                    console.warn("Detection failed, defaulting to 7x7");
+                    CONFIG.rows = 7; CONFIG.cols = 7;
+                }
             }
 
-            // 隐藏面板，显示舞台
             panel.style.opacity = 0;
             panel.style.pointerEvents = 'none';
             stage.classList.add('active');
@@ -363,8 +374,15 @@
     function animateLoop() {
         const factor = isIdle ? CONFIG.idleSmoothing : CONFIG.smoothing;
 
-        currentX += (targetX - currentX) * factor;
-        currentY += (targetY - currentY) * factor;
+        noiseTime += 0.02;
+        const microX = (Math.sin(noiseTime) * 0.5 + Math.sin(noiseTime * 3.1) * 0.3) * 0.015; 
+        const microY = (Math.cos(noiseTime * 1.3) * 0.5 + Math.cos(noiseTime * 2.7) * 0.3) * 0.015;
+
+        let finalTargetX = targetX + microX;
+        let finalTargetY = targetY + microY;
+
+        currentX += (finalTargetX - currentX) * factor;
+        currentY += (finalTargetY - currentY) * factor;
 
         let col = Math.min(Math.floor(currentX * CONFIG.cols), CONFIG.cols - 1);
         let row = Math.min(Math.floor(currentY * CONFIG.rows), CONFIG.rows - 1);
