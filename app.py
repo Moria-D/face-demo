@@ -27,6 +27,26 @@ def index():
 def serve_static(path):
     return send_from_directory('.', path)
 
+@app.route('/api/history', methods=['GET'])
+def get_history():
+    """获取所有已生成的历史 Grid 图片列表"""
+    try:
+        if not os.path.exists(OUTPUT_DIR):
+            return jsonify([])
+            
+        files = []
+        # 按修改时间倒序排列 (最新的在前)
+        for f in sorted(os.listdir(OUTPUT_DIR), key=lambda x: os.path.getmtime(os.path.join(OUTPUT_DIR, x)), reverse=True):
+            if f.endswith(('.webp', '.jpg', '.png')):
+                files.append({
+                    'name': f,
+                    'url': f'/{OUTPUT_DIR}/{f}',
+                    'time': time.strftime('%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(os.path.join(OUTPUT_DIR, f))))
+                })
+        return jsonify(files)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 def process_prediction_output(prediction):
     """封装好的处理逻辑，供正常流程和调试流程复用"""
     output = prediction.output
@@ -102,7 +122,7 @@ def generate():
                 version="kylan02/face-looker",
                 input={
                     "image": open(temp_path, "rb"),
-                    "step": 3,
+                    "step": 5,          # 尝试中间值：step=5 (约7x7=49张)，平衡限流风险和模型稳定性
                     "min_value": -15,
                     "max_value": 15
                 }
@@ -138,7 +158,8 @@ def generate():
             if prediction.status == "processing":
                 print(".", end="", flush=True)
             
-            time.sleep(1.0)
+            # 增加轮询间隔，避免轮询本身触发 Rate Limit
+            time.sleep(5.0)
 
         print("\n>>> 任务结束。最终状态:", prediction.status)
 

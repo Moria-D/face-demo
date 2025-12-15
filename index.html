@@ -63,9 +63,54 @@
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
+        /* === 历史记录侧边栏 === */
+        #history-btn {
+            position: absolute; top: 20px; right: 20px; z-index: 300;
+            background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2);
+            color: #ccc; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+            font-size: 12px; backdrop-filter: blur(10px); transition: all 0.2s;
+        }
+        #history-btn:hover { background: rgba(255,255,255,0.2); color: #fff; }
+
+        #history-panel {
+            position: fixed; top: 0; right: -300px; width: 280px; height: 100vh;
+            background: rgba(10, 10, 10, 0.95); border-left: 1px solid #333;
+            z-index: 400; transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            padding: 20px; overflow-y: auto; box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+        }
+        #history-panel.open { right: 0; }
+        
+        .history-item {
+            margin-bottom: 15px; cursor: pointer;
+            border: 1px solid #333; border-radius: 8px; overflow: hidden;
+            transition: all 0.2s; opacity: 0.8;
+        }
+        .history-item:hover { transform: translateY(-2px); border-color: #666; opacity: 1; }
+        .history-item img { width: 100%; display: block; height: 100px; object-fit: cover; }
+        .history-meta { padding: 8px; font-size: 10px; color: #888; background: #1a1a1a; }
+        
+        .close-btn { 
+            float: right; cursor: pointer; color: #666; font-size: 18px; margin-top: -5px; 
+        }
+        .close-btn:hover { color: #fff; }
+
     </style>
 </head>
 <body>
+
+<!-- 历史记录开关 -->
+<div id="history-btn" onclick="toggleHistory()">📂 历史记录</div>
+
+<!-- 历史记录面板 -->
+<div id="history-panel">
+    <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+        <h3 style="margin: 0; font-size: 16px;">已生成模型</h3>
+        <span class="close-btn" onclick="toggleHistory()">×</span>
+    </div>
+    <div id="history-list">
+        <div style="text-align: center; color: #444; margin-top: 50px;">加载中...</div>
+    </div>
+</div>
 
 <div id="generator-panel">
     <h1>Face Looker AI</h1>
@@ -79,7 +124,20 @@
     
     <div style="margin-top: 15px; font-size: 12px; color: #888; line-height: 1.6;" id="status-msg">
         需自备 Replicate API Token<br>
-        (生成 121 个角度约需 60-90秒)
+        (生成约需 60-90秒)
+    </div>
+
+    <!-- 加载本地/历史图片输入框 (保留作为备用) -->
+    <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 20px;">
+        <p style="margin-bottom: 10px; font-size: 12px;">或加载已生成的 Grid 图：</p>
+        <div style="display: flex; gap: 10px; justify-content: center;">
+            <input type="text" id="local-url-input" placeholder="输入路径 (如 /outputs/grid_xxx.webp)" 
+                   style="background: #222; border: 1px solid #444; color: #fff; padding: 8px 12px; border-radius: 6px; font-size: 12px; width: 200px;">
+            <button onclick="loadLocalImage()" 
+                    style="background: #333; color: white; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                加载
+            </button>
+        </div>
     </div>
 </div>
 
@@ -90,11 +148,13 @@
 
 <script>
     // === 核心逻辑配置 ===
-    const CONFIG = {
-        rows: 11, cols: 11,
-        smoothing: 0.1,  // 稍微调高平滑系数，让跟随更跟手
-        idleTime: 3000,   // 闲置3秒后归位
-        idleSmoothing: 0.02 // 归位时更慢，显得更自然
+    // 注意：默认配置为 7x7 (适配新版 step=5)
+    // 但我们会尝试自动检测 11x11 的旧图
+    let CONFIG = {
+        rows: 7, cols: 7, 
+        smoothing: 0.1,
+        idleTime: 3000,
+        idleSmoothing: 0.02
     };
 
     let gridImg = null;
@@ -105,7 +165,7 @@
     let currentX = 0.5, currentY = 0.5;
     let lastIndex = -1;
     let idleTimer = null;
-    let isIdle = false; // 标记是否处于待机状态
+    let isIdle = false; 
 
     const stage = document.getElementById('stage');
     const canvas = document.getElementById('canvas');
@@ -116,22 +176,60 @@
     const loader = document.getElementById('loader');
     const statusMsg = document.getElementById('status-msg');
     const monitor = document.getElementById('monitor');
+    const historyPanel = document.getElementById('history-panel');
 
-    // 1. 处理上传并调用后端 API
+    // === 历史记录功能 ===
+    let isHistoryLoaded = false;
+
+    function toggleHistory() {
+        historyPanel.classList.toggle('open');
+        if (historyPanel.classList.contains('open') && !isHistoryLoaded) {
+            fetchHistory();
+        }
+    }
+
+    async function fetchHistory() {
+        const listDiv = document.getElementById('history-list');
+        try {
+            const res = await fetch('/api/history');
+            const files = await res.json();
+            
+            if (files.length === 0) {
+                listDiv.innerHTML = '<div style="text-align: center; color: #444; margin-top: 50px;">暂无记录</div>';
+                return;
+            }
+
+            listDiv.innerHTML = files.map(file => `
+                <div class="history-item" onclick="loadFromHistory('${file.url}')">
+                    <img src="${file.url}" loading="lazy">
+                    <div class="history-meta">${file.time}</div>
+                </div>
+            `).join('');
+            
+            isHistoryLoaded = true;
+        } catch (e) {
+            listDiv.innerHTML = '<div style="color: red; text-align: center;">加载失败</div>';
+        }
+    }
+
+    function loadFromHistory(url) {
+        toggleHistory(); 
+        statusMsg.innerText = "正在从历史记录加载...";
+        initInteraction(url);
+    }
+
     async function handleUpload(e) {
         const file = e.target.files[0];
         if (!file) return;
 
-        // UI 状态更新
         setLoading(true);
-        statusMsg.innerHTML = "正在调度 GPU 集群生成 121 个视线角度...<br>请耐心等待，不要关闭页面 (预计 60s)";
-        statusMsg.style.color = "#4ade80"; // Green light
+        statusMsg.innerHTML = "正在调度 GPU 集群生成视线模型...<br>请耐心等待 (预计 60s)";
+        statusMsg.style.color = "#4ade80"; 
 
         const formData = new FormData();
         formData.append('image', file);
 
         try {
-            // 调用我们写的 Python 后端
             const response = await fetch('/api/generate', {
                 method: 'POST',
                 body: formData
@@ -150,8 +248,8 @@
 
             statusMsg.innerHTML = "生成完毕！正在下载高清纹理...";
             
-            // 拿到 URL 后初始化交互引擎
             initInteraction(data.grid_url);
+            isHistoryLoaded = false; 
 
         } catch (err) {
             console.error(err);
@@ -167,47 +265,87 @@
         btnText.innerText = isLoading ? '正在处理...' : '上传照片 & 开始生成';
     }
 
-    // 2. 初始化交互引擎 (P0 Version)
+    function loadLocalImage() {
+        const input = document.getElementById('local-url-input');
+        const url = input.value.trim();
+        if (!url) {
+            alert("请输入图片路径");
+            return;
+        }
+        const finalUrl = url.startsWith('/') || url.startsWith('http') ? url : '/outputs/' + url;
+        statusMsg.innerText = "正在加载历史图片...";
+        initInteraction(finalUrl);
+    }
+
+    // 2. 初始化交互引擎
     function initInteraction(imageUrl) {
         gridImg = new Image();
-        gridImg.crossOrigin = "Anonymous"; // 允许跨域
+        gridImg.crossOrigin = "Anonymous"; 
         gridImg.src = imageUrl;
 
         gridImg.onload = () => {
+            // === 智能检测网格尺寸 (修正版) ===
+            const w = gridImg.width;
+            console.log(`Grid Image Loaded. Width: ${w}px`);
+            
+            // 优先判断能否被 11 整除 (旧版模型通常输出 256x256 * 11 = 2816 或 512x512 * 11 = 5632)
+            if (w % 11 === 0) {
+                console.log("Width is divisible by 11. Setting layout to 11x11.");
+                CONFIG.rows = 11;
+                CONFIG.cols = 11;
+            } 
+            // 其次判断能否被 7 整除 (新版 step=5 输出)
+            else if (w % 7 === 0) {
+                console.log("Width is divisible by 7. Setting layout to 7x7.");
+                CONFIG.rows = 7;
+                CONFIG.cols = 7;
+            }
+            // 兜底逻辑：如果都除不尽，或者都除得尽，根据大小猜
+            else {
+                console.warn("Cannot detect layout automatically. Defaulting to 7x7.");
+                CONFIG.rows = 7;
+                CONFIG.cols = 7;
+            }
+
             // 隐藏面板，显示舞台
             panel.style.opacity = 0;
             panel.style.pointerEvents = 'none';
             stage.classList.add('active');
             monitor.style.opacity = 1;
 
-            // 计算尺寸
             frameW = gridImg.width / CONFIG.cols;
             frameH = gridImg.height / CONFIG.rows;
             resizeStage(frameW, frameH);
 
-            // 启动循环
             requestAnimationFrame(animateLoop);
             
-            // 绑定事件
             window.addEventListener('mousemove', handleInput);
+            window.addEventListener('touchmove', handleInput); 
             window.addEventListener('resize', () => resizeStage(frameW, frameH));
             
-            // 初始归位
             resetIdleTimer();
         };
     }
 
-    // 3. 物理引擎
     function handleInput(e) {
-        let rx = e.clientX / window.innerWidth;
-        let ry = e.clientY / window.innerHeight;
+        let clientX, clientY;
         
-        // 修正逻辑：确保能取到 0.0 和 1.0 的边缘值
-        // 之前可能因为 float 精度问题取不到第 11 格
+        if (e.touches) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+            e.preventDefault(); 
+        } else {
+            clientX = e.clientX;
+            clientY = e.clientY;
+        }
+
+        let rx = clientX / window.innerWidth;
+        let ry = clientY / window.innerHeight;
+        
         rx = Math.max(0, Math.min(1, rx));
         ry = Math.max(0, Math.min(1, ry));
 
-        ry = 1.0 - ry; // Y轴反转
+        ry = 1.0 - ry; 
         
         targetX = rx; targetY = ry;
         isIdle = false;
@@ -218,20 +356,16 @@
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
             targetX = 0.5; targetY = 0.5;
-            isIdle = true; // 进入待机模式
+            isIdle = true; 
         }, CONFIG.idleTime);
     }
 
     function animateLoop() {
-        // 如果处于待机归位模式，使用更慢的系数，看起来像生物的“缓慢回神”
         const factor = isIdle ? CONFIG.idleSmoothing : CONFIG.smoothing;
 
         currentX += (targetX - currentX) * factor;
         currentY += (targetY - currentY) * factor;
 
-        // 映射到 Grid 索引 (0 ~ 10)
-        // 使用 floor 并不是最完美的，因为它导致最后一格很难选中
-        // 优化算法：将 0~1 的连续区间均匀映射到 0~10 的离散区间
         let col = Math.min(Math.floor(currentX * CONFIG.cols), CONFIG.cols - 1);
         let row = Math.min(Math.floor(currentY * CONFIG.rows), CONFIG.rows - 1);
 
